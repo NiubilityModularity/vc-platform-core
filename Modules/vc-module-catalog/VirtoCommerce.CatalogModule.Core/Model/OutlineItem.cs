@@ -1,19 +1,15 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using VirtoCommerce.Domain.Commerce.Model;
+using VirtoCommerce.Platform.Core.Common;
 
-namespace VirtoCommerce.Domain.Catalog.Model
+namespace VirtoCommerce.CatalogModule.Core.Model
 {
     /// <summary>
     /// Represents one outline element: catalog, category or product.
     /// </summary>
-    public class OutlineItem : ISeoSupport
+    public class OutlineItem : Entity, ISeoSupport
     {
         #region ISeoSupport Members
-
-        /// <summary>
-        /// Object id
-        /// </summary>
-        public string Id { get; set; }
 
         /// <summary>
         /// Object type
@@ -23,10 +19,13 @@ namespace VirtoCommerce.Domain.Catalog.Model
         /// <summary>
         /// All SEO records for the object
         /// </summary>
-        public ICollection<SeoInfo> SeoInfos { get; set; }
+        public IList<SeoInfo> SeoInfos { get; set; }
 
         #endregion
-
+        /// <summary>
+        /// The name of current item
+        /// </summary>
+        public string Name { get; set; }
         /// <summary>
         /// True when this object is linked to the virtual parent.
         /// </summary>

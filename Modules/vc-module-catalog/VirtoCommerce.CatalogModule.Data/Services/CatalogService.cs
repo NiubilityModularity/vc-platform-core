@@ -3,12 +3,16 @@ using System.Collections.Generic;
 using System.Linq;
 using FluentValidation;
 using Microsoft.Extensions.Caching.Memory;
+using VirtoCommerce.CatalogModule.Core.Events;
+using VirtoCommerce.CatalogModule.Core.Model;
+using VirtoCommerce.CatalogModule.Core.Services;
+using VirtoCommerce.CatalogModule.Data.Caching;
 using VirtoCommerce.CatalogModule.Data.Model;
 using VirtoCommerce.CatalogModule.Data.Repositories;
-using VirtoCommerce.Domain.Catalog.Model;
-using VirtoCommerce.Domain.Catalog.Services;
 using VirtoCommerce.Platform.Core.Caching;
 using VirtoCommerce.Platform.Core.Common;
+using VirtoCommerce.Platform.Core.Domain;
+using VirtoCommerce.Platform.Core.Events;
 using VirtoCommerce.Platform.Data.Infrastructure;
 
 namespace VirtoCommerce.CatalogModule.Data.Services
@@ -18,23 +22,25 @@ namespace VirtoCommerce.CatalogModule.Data.Services
         private readonly IMemoryCache _memoryCache;
         private readonly AbstractValidator<IHasProperties> _hasPropertyValidator;
         private readonly Func<ICatalogRepository> _repositoryFactory;
+        private readonly IEventPublisher _eventPublisher;
 
-        public CatalogService(Func<ICatalogRepository> catalogRepositoryFactory, IMemoryCache cacheManager, AbstractValidator<IHasProperties> hasPropertyValidator)
+        public CatalogService(Func<ICatalogRepository> catalogRepositoryFactory, IMemoryCache cacheManager, AbstractValidator<IHasProperties> hasPropertyValidator, IEventPublisher eventPublisher)
         {
             _repositoryFactory = catalogRepositoryFactory;
             _memoryCache = cacheManager;
             _hasPropertyValidator = hasPropertyValidator;
+            _eventPublisher = eventPublisher;
         }
 
         #region ICatalogService Members
 
-        public virtual Catalog[] GetAllCatalogs()
+        public virtual IEnumerable<Catalog> GetAllCatalogs()
         {
             return PreloadCatalogs().Select(x => x.Value.Clone() as Catalog)
                                           .ToArray();
         }
 
-        public virtual Catalog[] GetByIds(string[] catalogIds)
+        public virtual IEnumerable<Catalog> GetByIds(IEnumerable<string> catalogIds)
         {
             //Clone required because client code may change resulting objects
             var result = PreloadCatalogs().Join(catalogIds, pair => pair.Key, id => id, (pair, id) => pair.Value)
@@ -43,9 +49,10 @@ namespace VirtoCommerce.CatalogModule.Data.Services
             return result;
         }
 
-        public virtual void SaveChanges(Catalog[] catalogs)
+        public virtual void SaveChanges(IEnumerable<Catalog> catalogs)
         {
             var pkMap = new PrimaryKeyResolvingMap();
+            var changedEntries = new List<ChangedEntry<Catalog>>();
 
             using (var repository = _repositoryFactory())
             using (var changeTracker = new ObservableChangeTracker())
@@ -60,24 +67,32 @@ namespace VirtoCommerce.CatalogModule.Data.Services
                     {
                         changeTracker.Attach(originalEntity);
                         modifiedEntity.Patch(originalEntity);
+                        changedEntries.Add(new ChangedEntry<Catalog>(catalog, EntryState.Modified));
                     }
                     else
                     {
                         repository.Add(modifiedEntity);
+                        changedEntries.Add(new ChangedEntry<Catalog>(catalog, EntryState.Added));
                     }
                 }
+                //Raise domain events
+                _eventPublisher.Publish(new GenericCatalogChangingEvent<Catalog>(changedEntries));
+                //Save changes in database
                 repository.UnitOfWork.Commit();
                 pkMap.ResolvePrimaryKeys();
+                _eventPublisher.Publish(new GenericCatalogChangedEvent<Catalog>(changedEntries));
+
                 //Reset cached catalogs and catalogs
                 CatalogCacheRegion.ExpireRegion();
             }
         }
 
-        public void Delete(string[] catalogIds)
+        public void Delete(IEnumerable<string> catalogIds)
         {
             using (var repository = _repositoryFactory())
             {
-                repository.RemoveCatalogs(catalogIds);
+                //TODO:  raise events on catalog deletion
+                repository.RemoveCatalogs(catalogIds.ToArray());
                 repository.UnitOfWork.Commit();
                 //Reset cached catalogs and catalogs
                 CatalogCacheRegion.ExpireRegion();
@@ -87,8 +102,8 @@ namespace VirtoCommerce.CatalogModule.Data.Services
 
         protected virtual Dictionary<string, Catalog> PreloadCatalogs()
         {
-            var cacheKey = CacheKey.With(GetType(), "AllCatalogs");
-            return _memoryCache.GetOrCreateExclusive("AllCatalogs", (cacheEntry) =>
+            var cacheKey = CacheKey.With(GetType(), "PreloadCatalogs");
+            return _memoryCache.GetOrCreateExclusive(cacheKey, (cacheEntry) =>
             {
                 cacheEntry.AddExpirationToken(CatalogCacheRegion.CreateChangeToken());
                 CatalogEntity[] entities;
@@ -121,30 +136,13 @@ namespace VirtoCommerce.CatalogModule.Data.Services
                     foreach (var property in catalog.Properties)
                     {
                         property.Catalog = preloadedCatalogsMap[property.CatalogId];
-                    }
-                    if (!catalog.PropertyValues.IsNullOrEmpty())
-                    {
-                        //Next need set Property in PropertyValues objects
-                        foreach (var propValue in catalog.PropertyValues.ToArray())
-                        {
-                            propValue.Property = catalog.Properties.Where(x => x.Type == PropertyType.Catalog)
-                                                                   .FirstOrDefault(x => x.IsSuitableForValue(propValue));
-                            //Because multilingual dictionary values for all languages may not stored in db then need to add it in result manually from property dictionary values
-                            var localizedDictValues = propValue.TryGetAllLocalizedDictValues();
-                            foreach (var localizedDictValue in localizedDictValues)
-                            {
-                                if (!catalog.PropertyValues.Any(x => x.ValueId == localizedDictValue.ValueId && x.LanguageCode == localizedDictValue.LanguageCode))
-                                {
-                                    catalog.PropertyValues.Add(localizedDictValue);
-                                }
-                            }
-                        }
-                    }
+                        property.ActualizeValues();
+                    }                 
                 }
             }
         }
 
-        private void ValidateCatalogProperties(Catalog[] catalogs)
+        private void ValidateCatalogProperties(IEnumerable<Catalog> catalogs)
         {
             LoadDependencies(catalogs, PreloadCatalogs());
             foreach (var catalog in catalogs)

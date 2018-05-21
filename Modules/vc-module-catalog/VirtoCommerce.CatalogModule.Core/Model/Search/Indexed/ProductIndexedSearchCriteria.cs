@@ -5,9 +5,9 @@ using VirtoCommerce.Domain.Commerce.Model.Search;
 using VirtoCommerce.Domain.Search;
 using VirtoCommerce.Platform.Core.Common;
 
-namespace VirtoCommerce.Domain.Catalog.Model.Search
+namespace VirtoCommerce.CatalogModule.Core.Model
 {
-    public class ProductSearchCriteria : CatalogSearchCriteriaBase
+    public class ProductIndexedSearchCriteria : IndexedSearchCriteriaBase
     {
         public override string ObjectType { get; set; } = KnownDocumentTypes.Product;
 
@@ -64,6 +64,6 @@ namespace VirtoCommerce.Domain.Catalog.Model.Search
         /// <summary>
         /// Override base SortInfo property to support GeoSortInfo sorting types
         /// </summary>
-        public override SortInfo[] SortInfos => GeoSortInfo.TryParse(Sort).ToArray();
+        public override IList<SortInfo> SortInfos => GeoSortInfo.TryParse(Sort).ToArray();
     }
 }

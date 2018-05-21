@@ -8,7 +8,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Smidge;
+using Smidge.FileProcessors;
 using Smidge.Models;
+using Smidge.Options;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
 
@@ -22,11 +24,11 @@ namespace VirtoCommerce.Platform.Modules.Extensions
             {
                 var moduleManager = serviceScope.ServiceProvider.GetRequiredService<IModuleManager>();
                 var modules = GetInstalledModules(serviceScope.ServiceProvider);
-                var permissionsProvider = serviceScope.ServiceProvider.GetRequiredService<IPermissionsProvider>();
+                var permissionsProvider = serviceScope.ServiceProvider.GetRequiredService<IKnownPermissionsProvider>();
                 foreach (var module in modules)
                 {
                     //Register modules permissions defined in the module manifest
-                    var modulePermissions = module.Permissions.SelectMany(x => x.Permissions).Select(x=> new Permission { Name = x.Name }).ToArray();
+                    var modulePermissions = module.Permissions.SelectMany(x => x.Permissions).Select(x=> new Permission { Name = x.Id }).ToArray();
                     permissionsProvider.RegisterPermissions(modulePermissions);
 
                     moduleManager.PostInitializeModule(module, serviceScope.ServiceProvider);
@@ -55,7 +57,13 @@ namespace VirtoCommerce.Platform.Modules.Extensions
             //TODO: Test minification and uglification for resulting bundles
             var options = bundles.DefaultBundleOptions;
             options.DebugOptions.FileWatchOptions.Enabled = true;
-        
+            options.DebugOptions.ProcessAsCompositeFile = true;
+            options.DebugOptions.CacheControlOptions = new CacheControlOptions() { EnableETag = false, CacheControlMaxAge = 0 };
+            options.ProductionOptions.ProcessAsCompositeFile = true;
+            options.ProductionOptions.FileWatchOptions.Enabled = true;
+            options.ProductionOptions.CacheControlOptions = new CacheControlOptions() { EnableETag = false, CacheControlMaxAge = 0 };
+       
+         
             bundles.Create("vc-modules-styles", cssFiles.ToArray())
                .WithEnvironmentOptions(options);
 
